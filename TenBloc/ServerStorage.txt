@@ -1,0 +1,32 @@
+[
+  {
+    "id": "1",
+    "name": "Starter World",
+    "world": {
+      "spawn": { "x": 0, "y": 2, "z": 5 },
+      "objects": [
+        {
+          "id": "ground",
+          "type": "Block",
+          "position": { "x": 0, "y": 0, "z": 0 },
+          "size": { "x": 40, "y": 1, "z": 40 },
+          "color": "#4caf50"
+        },
+        {
+          "id": "block1",
+          "type": "Block",
+          "position": { "x": 5, "y": 1, "z": 0 },
+          "size": { "x": 2, "y": 2, "z": 2 },
+          "color": "#ff0000"
+        },
+        {
+          "id": "block2",
+          "type": "Block",
+          "position": { "x": -4, "y": 1, "z": -3 },
+          "size": { "x": 3, "y": 3, "z": 3 },
+          "color": "#2196f3"
+        }
+      ]
+    }
+  }
+]

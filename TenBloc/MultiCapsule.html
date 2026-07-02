@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TenBloc MultiCapsule</title>
+  <style>
+    body { margin:0; overflow:hidden; background:#111; font-family:sans-serif; color:white; }
+    #status {
+      position:fixed; top:10px; left:10px;
+      background:rgba(0,0,0,0.6); padding:8px 12px;
+      border-radius:6px; font-size:14px; z-index:10;
+    }
+  </style>
+</head>
+<body>
+<div id="status">Connecting...</div>
+<canvas id="gameCanvas"></canvas>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+
+<script>
+  // REQUIRE LOGIN
+  const activeUser = localStorage.getItem("TenBlocActiveUser");
+  if (!activeUser) {
+    alert("You must be logged in to play MultiCapsule.");
+    window.location.href = "players.html";
+  }
+
+  function loadPlayers() {
+    const raw = localStorage.getItem("TenBlocPlayers");
+    if (!raw) return [];
+    try { return JSON.parse(raw); } catch { return []; }
+  }
+
+  function getPlayerData(username) {
+    const players = loadPlayers();
+    return players.find(p => p.username === username);
+  }
+
+  const me = getPlayerData(activeUser);
+  if (!me) {
+    alert("Your account data is missing.");
+  }
+
+  const canvas = document.getElementById("gameCanvas");
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color("#87CEEB");
+
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+  scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xffffff, 1);
+  dir.position.set(10,20,10);
+  scene.add(dir);
+
+  // Simple ground
+  const groundGeo = new THREE.BoxGeometry(50,1,50);
+  const groundMat = new THREE.MeshStandardMaterial({ color:"#55aa55" });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.position.set(0,-0.5,0);
+  scene.add(ground);
+
+  // Player capsules
+  const players = {}; // username -> { mesh, x,y,z }
+
+  function createCapsuleFor(username, data) {
+    const color = (data && data.cosmetics && data.cosmetics.bodyColor) || "#ffffff";
+    const geo = new THREE.CapsuleGeometry(0.4,1.2,8,16);
+    const mat = new THREE.MeshStandardMaterial({ color });
+    const mesh = new THREE.Mesh(geo, mat);
+
+    if (data && data.cosmetics && data.cosmetics.hat === "hat1") {
+      const hatGeo = new THREE.ConeGeometry(0.5,1,16);
+      const hatMat = new THREE.MeshStandardMaterial({ color:"#ffdd00" });
+      const hat = new THREE.Mesh(hatGeo, hatMat);
+      hat.position.set(0,1.6,0);
+      mesh.add(hat);
+    }
+
+    mesh.position.set(0,1,0);
+    scene.add(mesh);
+
+    players[username] = {
+      mesh,
+      x:0, y:1, z:0
+    };
+  }
+
+  createCapsuleFor(activeUser, me);
+
+  // Camera follows local player
+  let camRotY = 0;
+  let camRotX = 0;
+
+  window.addEventListener("mousemove", e => {
+    if (e.buttons === 1) {
+      camRotY -= e.movementX * 0.003;
+      camRotX -= e.movementY * 0.003;
+      camRotX = Math.max(-1.2, Math.min(1.2, camRotX));
+    }
+  });
+
+  const keys = {};
+  window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+  window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+  function updateLocalMovement(dt) {
+    const mePl = players[activeUser];
+    if (!mePl) return;
+
+    const speed = 6;
+    const forward = new THREE.Vector3(Math.sin(camRotY),0,Math.cos(camRotY));
+    const right = new THREE.Vector3(Math.sin(camRotY+Math.PI/2),0,Math.cos(camRotY+Math.PI/2));
+
+    let move = new THREE.Vector3(0,0,0);
+
+    if (keys["w"]) move.add(forward);
+    if (keys["s"]) move.sub(forward);
+    if (keys["a"]) move.sub(right);
+    if (keys["d"]) move.add(right);
+
+    if (move.length() > 0) {
+      move.normalize();
+      move.multiplyScalar(speed * dt);
+    }
+
+    mePl.x += move.x;
+    mePl.z += move.z;
+
+    mePl.mesh.position.set(mePl.x, mePl.y, mePl.z);
+  }
+
+  function updateCamera() {
+    const mePl = players[activeUser];
+    if (!mePl) return;
+    const target = mePl.mesh.position;
+    const dist = 10;
+
+    camera.position.set(
+      target.x - Math.sin(camRotY)*dist,
+      target.y + 4 - camRotX*5,
+      target.z - Math.cos(camRotY)*dist
+    );
+    camera.lookAt(target);
+  }
+
+  // WEBSOCKET CLIENT
+  const statusEl = document.getElementById("status");
+  const ws = new WebSocket("ws://localhost:8080"); // change to your server URL
+
+  ws.onopen = () => {
+    statusEl.textContent = "Connected as " + activeUser;
+    ws.send(JSON.stringify({
+      type:"join",
+      username: activeUser
+    }));
+  };
+
+  ws.onclose = () => {
+    statusEl.textContent = "Disconnected";
+  };
+
+  ws.onerror = () => {
+    statusEl.textContent = "Connection error";
+  };
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+
+    if (msg.type === "state") {
+      // full state: { players: { username: { x,y,z } } }
+      Object.keys(msg.players).forEach(u => {
+        const pdata = msg.players[u];
+        if (!players[u]) {
+          const data = getPlayerData(u);
+          createCapsuleFor(u, data);
+        }
+        players[u].x = pdata.x;
+        players[u].y = pdata.y;
+        players[u].z = pdata.z;
+        players[u].mesh.position.set(pdata.x, pdata.y, pdata.z);
+      });
+    }
+
+    if (msg.type === "leave") {
+      const u = msg.username;
+      if (players[u]) {
+        scene.remove(players[u].mesh);
+        delete players[u];
+      }
+    }
+  };
+
+  function sendMyState() {
+    const mePl = players[activeUser];
+    if (!mePl || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type:"move",
+      username: activeUser,
+      x: mePl.x,
+      y: mePl.y,
+      z: mePl.z
+    }));
+  }
+
+  let last = performance.now();
+  function loop() {
+    const now = performance.now();
+    const dt = (now - last)/1000;
+    last = now;
+
+    updateLocalMovement(dt);
+    updateCamera();
+    renderer.render(scene, camera);
+    sendMyState();
+
+    requestAnimationFrame(loop);
+  }
+  loop();
+</script>
+</body>
+</html>

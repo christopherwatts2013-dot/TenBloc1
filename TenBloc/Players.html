@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>TenBloc Accounts</title>
+<style>
+  body { background:#111; color:white; font-family:sans-serif; text-align:center; padding-top:60px; }
+  .box {
+    background:#222; padding:20px; width:300px; margin:auto; border-radius:10px;
+  }
+  input {
+    width:90%; padding:10px; margin:8px; border:none; border-radius:6px;
+  }
+  .btn {
+    background:#4caf50; padding:10px 20px; border-radius:6px; cursor:pointer; margin-top:10px;
+  }
+  #switch { margin-top:20px; cursor:pointer; color:#4caf50; }
+  .playerCard {
+    background:#333; padding:10px; margin:10px; border-radius:6px;
+  }
+</style>
+</head>
+<body>
+
+<h1>TenBloc Login</h1>
+
+<!-- LOGIN -->
+<div id="loginBox" class="box">
+  <h2>Login</h2>
+  <input id="loginUser" placeholder="Username">
+  <input id="loginPass" placeholder="Password" type="password">
+  <div class="btn" onclick="login()">Login</div>
+  <div id="switch" onclick="showSignup()">Create Account</div>
+</div>
+
+<!-- SIGNUP -->
+<div id="signupBox" class="box" style="display:none;">
+  <h2>Sign Up</h2>
+  <input id="signupUser" placeholder="Username">
+  <input id="signupPass" placeholder="Password" type="password">
+  <div class="btn" onclick="signup()">Sign Up</div>
+  <div id="switch" onclick="showLogin()">Back to Login</div>
+</div>
+
+<!-- ADMIN PANEL (ONLY visible to Cjmegamind) -->
+<div id="adminPanel" class="box" style="display:none; margin-top:40px;">
+  <h2>Admin Panel</h2>
+  <p>Logged in as: <b id="adminUser"></b></p>
+  <div id="adminList"></div>
+</div>
+
+<!-- FRIEND SYSTEM -->
+<div id="friendPanel" class="box" style="display:none; margin-top:40px;">
+  <h2>Your Friends</h2>
+  <div id="friendList"></div>
+
+  <h3>Add Friend</h3>
+  <input id="friendName" placeholder="Username">
+  <div class="btn" onclick="addFriend()">Add Friend</div>
+</div>
+
+<script>
+// HASH FUNCTION
+async function hash(text) {
+  const msgUint8 = new TextEncoder().encode(text);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// LOAD PLAYER DATABASE
+function loadPlayers() {
+  const raw = localStorage.getItem("TenBlocPlayers");
+  if (!raw) return [];
+  try { return JSON.parse(raw); } catch { return []; }
+}
+
+// SAVE PLAYER DATABASE
+function savePlayers(players) {
+  localStorage.setItem("TenBlocPlayers", JSON.stringify(players));
+}
+
+// SWITCH UI
+function showSignup() {
+  document.getElementById("loginBox").style.display = "none";
+  document.getElementById("signupBox").style.display = "block";
+}
+function showLogin() {
+  document.getElementById("signupBox").style.display = "none";
+  document.getElementById("loginBox").style.display = "block";
+}
+
+// SIGNUP
+async function signup() {
+  const user = document.getElementById("signupUser").value.trim();
+  const pass = document.getElementById("signupPass").value;
+
+  if (!user || !pass) {
+    alert("Please enter a username and password.");
+    return;
+  }
+
+  let players = loadPlayers();
+
+  if (players.find(p => p.username === user)) {
+    alert("Username already exists.");
+    return;
+  }
+
+  const hashed = await hash(pass);
+
+  players.push({
+    username: user,
+    password: hashed,
+    blocs: 0,
+    cosmetics: { bodyColor:"#ffffff", hat:null },
+    friends: []
+  });
+
+  savePlayers(players);
+
+  alert("Account created! You can now log in.");
+  showLogin();
+}
+
+// LOGIN (CLEAN + FIXED)
+async function login() {
+  const user = document.getElementById("loginUser").value.trim();
+  const pass = document.getElementById("loginPass").value;
+
+  let players = loadPlayers();
+  const hashed = await hash(pass);
+
+  const player = players.find(p => p.username === user);
+
+  if (!player || player.password !== hashed) {
+    alert("Invalid username or password.");
+    return;
+  }
+
+  localStorage.setItem("TenBlocActiveUser", user);
+
+  alert("Login successful!");
+
+  // ADMIN stays on players.html
+  if (user === "Cjmegamind") {
+    showAdminPanel(user);
+    return;
+  }
+
+  // NORMAL players go to index.html
+  window.location.href = "index.html";
+}
+
+// FRIEND PANEL
+function showFriendPanel(username) {
+  document.getElementById("friendPanel").style.display = "block";
+
+  const players = loadPlayers();
+  const player = players.find(p => p.username === username);
+
+  const list = document.getElementById("friendList");
+  list.innerHTML = "";
+
+  if (player.friends.length === 0) {
+    list.innerHTML = "<p>No friends yet.</p>";
+    return;
+  }
+
+  player.friends.forEach(f => {
+    const div = document.createElement("div");
+    div.className = "playerCard";
+    div.innerHTML = `
+      ${f}
+      <br>
+      <button onclick="removeFriend('${f}')">Remove</button>
+    `;
+    list.appendChild(div);
+  });
+}
+
+function addFriend() {
+  const friend = document.getElementById("friendName").value.trim();
+  const user = localStorage.getItem("TenBlocActiveUser");
+
+  if (!friend) return alert("Enter a username.");
+
+  let players = loadPlayers();
+  const player = players.find(p => p.username === user);
+
+  if (!players.find(p => p.username === friend)) {
+    alert("User does not exist.");
+    return;
+  }
+
+  if (player.friends.includes(friend)) {
+    alert("Already friends.");
+    return;
+  }
+
+  player.friends.push(friend);
+  savePlayers(players);
+
+  alert("Friend added!");
+  showFriendPanel(user);
+}
+
+function removeFriend(friend) {
+  const user = localStorage.getItem("TenBlocActiveUser");
+  let players = loadPlayers();
+  const player = players.find(p => p.username === user);
+
+  player.friends = player.friends.filter(f => f !== friend);
+  savePlayers(players);
+
+  alert("Friend removed.");
+  showFriendPanel(user);
+}
+
+// ADMIN PANEL (ONLY FOR CJMEGAMIND)
+function showAdminPanel(username) {
+  if (username !== "Cjmegamind") return;
+
+  document.getElementById("adminPanel").style.display = "block";
+  document.getElementById("adminUser").textContent = username;
+
+  const players = loadPlayers();
+  const list = document.getElementById("adminList");
+  list.innerHTML = "";
+
+  players.forEach(p => {
+    const div = document.createElement("div");
+    div.className = "playerCard";
+
+    div.innerHTML = `
+      <b>${p.username}</b><br>
+      Blocs: ${p.blocs}<br>
+      Body Color: ${p.cosmetics.bodyColor}<br>
+      Hat: ${p.cosmetics.hat}<br><br>
+
+      <button onclick="adminGiveBlocs('${p.username}', 500)">Give 500 Blocs</button>
+      <button onclick="adminResetPass('${p.username}')">Reset Password</button>
+      <button onclick="adminDelete('${p.username}')">Delete Account</button>
+    `;
+
+    list.appendChild(div);
+  });
+}
+
+function adminGiveBlocs(username, amount) {
+  let players = loadPlayers();
+  const p = players.find(x => x.username === username);
+  p.blocs += amount;
+  savePlayers(players);
+  alert("Blocs added!");
+  showAdminPanel("Cjmegamind");
+}
+
+async function adminResetPass(username) {
+  const newPass = prompt("Enter new password:");
+  if (!newPass) return;
+
+  let players = loadPlayers();
+  const p = players.find(x => x.username === username);
+  p.password = await hash(newPass);
+  savePlayers(players);
+
+  alert("Password reset!");
+}
+
+function adminDelete(username) {
+  if (!confirm("Delete this account?")) return;
+
+  let players = loadPlayers();
+  players = players.filter(p => p.username !== username);
+  savePlayers(players);
+
+  alert("Account deleted!");
+  showAdminPanel("Cjmegamind");
+}
+</script>
+
+</body>
+</html>

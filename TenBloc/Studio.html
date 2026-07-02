@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TenBloc Studio (Lightweight)</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #111; font-family: sans-serif; }
+    #editorCanvas { width: 100vw; height: 100vh; display: block; }
+
+    #overlay {
+      position: fixed; top: 10px; left: 10px;
+      background: rgba(0,0,0,0.6); padding: 8px 12px;
+      border-radius: 6px; color: white; font-size: 14px;
+      z-index: 10;
+    }
+
+    #toolbar {
+      position: fixed; bottom: 10px; left: 10px;
+      background: rgba(0,0,0,0.7);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #fff;
+      z-index: 10;
+    }
+
+    #toolbar span {
+      margin-right: 10px;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+      background: #333;
+    }
+
+    #toolbar span.active {
+      background: #4caf50;
+    }
+
+    #publishBtn {
+      position: fixed; top: 10px; right: 10px;
+      background: #4caf50;
+      padding: 8px 12px;
+      border-radius: 6px;
+      color: #fff;
+      cursor: pointer;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="editorCanvas"></canvas>
+
+<div id="overlay">
+  Left‑click: place block • Right‑click: delete • Scroll: size • 1/2/3: color • Drag right‑click: rotate
+</div>
+
+<div id="toolbar">
+  <span id="color1" class="active">Green</span>
+  <span id="color2">Red</span>
+  <span id="color3">Blue</span>
+  <span>Size: <span id="sizeLabel">2</span></span>
+</div>
+
+<div id="publishBtn" onclick="publishWorld()">Publish</div>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+
+<script>
+const SERVER_STORAGE_KEY = "ServerStorage";
+let currentBlocks = [];
+let currentColorIndex = 0;
+let currentSize = 2;
+const colors = ["#4caf50", "#ff0000", "#2196f3"];
+
+function saveGamesList(list) {
+  localStorage.setItem(SERVER_STORAGE_KEY, JSON.stringify(list));
+}
+
+function loadGames() {
+  const raw = localStorage.getItem(SERVER_STORAGE_KEY);
+  if (!raw) return [];
+  try { return JSON.parse(raw); } catch { return []; }
+}
+
+let games = loadGames();
+
+document.getElementById("color1").onclick = () => setColor(0);
+document.getElementById("color2").onclick = () => setColor(1);
+document.getElementById("color3").onclick = () => setColor(2);
+
+function setColor(i) {
+  currentColorIndex = i;
+  document.getElementById("color1").classList.remove("active");
+  document.getElementById("color2").classList.remove("active");
+  document.getElementById("color3").classList.remove("active");
+  document.getElementById("color" + (i+1)).classList.add("active");
+}
+
+window.addEventListener("wheel", e => {
+  e.preventDefault();
+  currentSize += e.deltaY > 0 ? -0.2 : 0.2;
+  currentSize = Math.max(0.5, Math.min(5, currentSize));
+  document.getElementById("sizeLabel").textContent = currentSize.toFixed(1);
+}, { passive: false });
+
+window.addEventListener("keydown", e => {
+  if (e.key === "1") setColor(0);
+  if (e.key === "2") setColor(1);
+  if (e.key === "3") setColor(2);
+});
+
+class Studio {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color("#222");
+
+    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    this.camera.position.set(10, 15, 20);
+
+    this.raycaster = new THREE.Raycaster();
+    this.mouse = new THREE.Vector2();
+
+    this.camRot = { x: 0, y: 0 };
+    this.mouseDown = false;
+
+    window.addEventListener("contextmenu", e => e.preventDefault());
+
+    canvas.addEventListener("mousedown", e => {
+      if (e.button === 2) {
+        this.mouseDown = true;
+      } else if (e.button === 0) {
+        this.leftClick(e);
+      }
+    });
+
+    window.addEventListener("mouseup", () => this.mouseDown = false);
+
+    window.addEventListener("mousemove", e => {
+      if (this.mouseDown) {
+        this.camRot.y -= e.movementX * 0.003;
+        this.camRot.x -= e.movementY * 0.003;
+        this.camRot.x = Math.max(-1.2, Math.min(1.2, this.camRot.x));
+      }
+    });
+
+    this.setupWorld();
+    this.loop();
+  }
+
+  setupWorld() {
+    const grid = new THREE.GridHelper(80, 40, 0x444444, 0x222222);
+    this.scene.add(grid);
+
+    // BASEPLATE
+    const baseGeo = new THREE.BoxGeometry(80, 1, 80);
+    const baseMat = new THREE.MeshStandardMaterial({ color: "#cfcfcf" });
+    this.baseplate = new THREE.Mesh(baseGeo, baseMat);
+    this.baseplate.position.set(0, -0.5, 0);
+    this.scene.add(this.baseplate);
+
+    this.ground = this.baseplate;
+
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+    this.scene.add(hemi);
+
+    const dir = new THREE.DirectionalLight(0xffffff, 1);
+    dir.position.set(10, 20, 10);
+    this.scene.add(dir);
+  }
+
+  leftClick(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    const hits = this.raycaster.intersectObjects([this.ground]);
+
+    if (hits.length > 0) {
+      const p = hits[0].point;
+      this.placeBlock(p);
+    }
+  }
+
+  placeBlock(point) {
+    const size = currentSize;
+    const color = colors[currentColorIndex];
+
+    const geo = new THREE.BoxGeometry(size, size, size);
+    const mat = new THREE.MeshStandardMaterial({ color });
+    const mesh = new THREE.Mesh(geo, mat);
+
+    mesh.position.set(
+      Math.round(point.x),
+      size / 2,
+      Math.round(point.z)
+    );
+
+    this.scene.add(mesh);
+
+    currentBlocks.push({
+      id: "block_" + currentBlocks.length,
+      type: "Block",
+      position: { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z },
+      size: { x: size, y: size, z: size },
+      color
+    });
+  }
+
+  updateCamera() {
+    const r = 25;
+    const cx = Math.sin(this.camRot.y) * r;
+    const cz = Math.cos(this.camRot.y) * r;
+    const cy = 10 - this.camRot.x * 10;
+
+    this.camera.position.set(cx, cy, cz);
+    this.camera.lookAt(0, 0, 0);
+  }
+
+  loop() {
+    this.updateCamera();
+    this.renderer.render(this.scene, this.camera);
+    requestAnimationFrame(() => this.loop());
+  }
+}
+
+const studio = new Studio(document.getElementById("editorCanvas"));
+
+function publishWorld() {
+  const world = {
+    spawn: { x: 0, y: 2, z: 5 },
+    objects: [
+      // include baseplate in world
+      {
+        id: "baseplate",
+        type: "Block",
+        position: { x: 0, y: -0.5, z: 0 },
+        size: { x: 80, y: 1, z: 80 },
+        color: "#cfcfcf"
+      },
+      ...currentBlocks
+    ]
+  };
+
+  let nextId = 1;
+  if (games.length > 0) {
+    const ids = games.map(g => parseInt(g.id));
+    nextId = Math.max(...ids) + 1;
+  }
+
+  const newGame = {
+    id: String(nextId),
+    name: "Studio World " + nextId,
+    world
+  };
+
+  games.push(newGame);
+  saveGamesList(games);
+
+  alert("Published! Launching TenBloc Player…");
+
+  window.location.href = "index.html";
+}
+</script>
+
+</body>
+</html>
